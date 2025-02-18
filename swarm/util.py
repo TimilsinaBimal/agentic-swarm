@@ -27,7 +27,6 @@ def merge_chunk(final_response: dict, delta: dict) -> None:
         index = tool_calls[0].pop("index")
         merge_fields(final_response["tool_calls"][index], tool_calls[0])
 
-
 def function_to_json(func) -> dict:
     """
     Converts a Python function into a JSON-serializable dictionary
@@ -57,6 +56,35 @@ def function_to_json(func) -> dict:
             f"Failed to get signature for function {func.__name__}: {str(e)}"
         )
 
+    # Extract parameter descriptions from docstring
+    param_descriptions = {}
+    func_description = ""
+    if func.__doc__:
+        docstring_lines = func.__doc__.split('\n')
+        in_args_section = False
+        for line in docstring_lines:
+            line = line.strip()
+            if line.lower().startswith('args:'):
+                in_args_section = True
+                continue
+
+            elif in_args_section:
+                if not line:  # Empty line
+                    in_args_section = False
+                    continue
+                if line.startswith(('Returns:', 'Raises:')):
+                    break
+                if ':' in line:
+                    param_name, description = line.split(':', 1)
+                    param_name = param_name.strip()
+                    # if param_name also contains types, remove them
+                    if '(' in param_name:
+                        param_name = param_name.split('(')[0].strip()
+                    description = description.strip()
+                    param_descriptions[param_name] = description
+            else:
+                func_description += line + ' '
+
     parameters = {}
     for param in signature.parameters.values():
         try:
@@ -65,7 +93,10 @@ def function_to_json(func) -> dict:
             raise KeyError(
                 f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
             )
-        parameters[param.name] = {"type": param_type}
+        parameters[param.name] = {
+            "type": param_type,
+            "description": param_descriptions.get(param.name, "")
+        }
 
     required = [
         param.name
@@ -77,7 +108,7 @@ def function_to_json(func) -> dict:
         "type": "function",
         "function": {
             "name": func.__name__,
-            "description": func.__doc__ or "",
+            "description": func_description.strip() or "",
             "parameters": {
                 "type": "object",
                 "properties": parameters,
